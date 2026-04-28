@@ -26,53 +26,33 @@ def post(webhook, title, description, url=None):
             timeout=15
         )
 
-        print(
-            f"{title} -> {r.status_code}"
-        )
+        print(f"{title} -> {r.status_code}")
 
     except Exception as e:
-        print(
-            f"Error posting {title}: {e}"
-        )
+        print(f"Error posting {title}: {e}")
 
 
-def test_scheduled_channels():
+def test_world_boss_alerts():
 
     post(
         os.getenv(
-            "WEBHOOK_DAILY_RESET"
+            "WEBHOOK_WORLD_BOSSES"
         ),
-        "🕒 Test Daily Reset",
-        "Daily reset reminder channel is working."
+        "🐉 Tequatl in 30 minutes",
+        "Test world boss alert. Move to Sparkfly Fen."
     )
 
     post(
         os.getenv(
-            "WEBHOOK_WEEKLY_RESET"
+            "WEBHOOK_WORLD_BOSSES"
         ),
-        "📅 Test Weekly Reset",
-        "Weekly reset reminder channel is working."
-    )
-
-    post(
-        os.getenv(
-            "WEBHOOK_WVW_RESET"
-        ),
-        "⚔️ Test WvW Reset",
-        "WvW reset reminder channel is working."
-    )
-
-    post(
-        os.getenv(
-            "WEBHOOK_GUILD_REMINDERS"
-        ),
-        "🏰 Test Guild Reminder",
-        "Guild reminder channel is working."
+        "⚠️ Triple Trouble begins soon",
+        "Test world boss alert. Squad up."
     )
 
 
 def main():
-    test_scheduled_channels()
+    test_world_boss_alerts()
 
 
 if __name__ == "__main__":
