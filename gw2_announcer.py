@@ -77,28 +77,21 @@ def item_id(entry):
 
 
 FEEDS = {
-
     "game_updates": {
         "url": "https://www.guildwars2.com/en/feed",
-        "webhook": os.getenv(
-            "WEBHOOK_GAME_UPDATES"
-        ),
+        "webhook": os.getenv("WEBHOOK_GAME_UPDATES"),
         "keywords": []
     },
 
     "patch_notes": {
         "url": "https://en-forum.guildwars2.com/categories/game-release-notes/feed.rss",
-        "webhook": os.getenv(
-            "WEBHOOK_PATCH_NOTES"
-        ),
+        "webhook": os.getenv("WEBHOOK_PATCH_NOTES"),
         "keywords": []
     },
 
     "festivals": {
         "url": "https://www.guildwars2.com/en/feed",
-        "webhook": os.getenv(
-            "WEBHOOK_FESTIVALS"
-        ),
+        "webhook": os.getenv("WEBHOOK_FESTIVALS"),
         "keywords": [
             "festival",
             "dragon bash",
@@ -113,9 +106,7 @@ FEEDS = {
 
     "bonus_events": {
         "url": "https://www.guildwars2.com/en/feed",
-        "webhook": os.getenv(
-            "WEBHOOK_BONUS_EVENTS"
-        ),
+        "webhook": os.getenv("WEBHOOK_BONUS_EVENTS"),
         "keywords": [
             "bonus event",
             "bonus xp",
@@ -125,24 +116,9 @@ FEEDS = {
         ]
     },
 
-    "livestreams": {
-        "url": "https://www.guildwars2.com/en/feed",
-        "webhook": os.getenv(
-            "WEBHOOK_LIVESTREAMS"
-        ),
-        "keywords": [
-            "livestream",
-            "guild chat",
-            "arenanet live",
-            "twitch"
-        ]
-    },
-
     "gemstore": {
         "url": "https://www.guildwars2.com/en/feed",
-        "webhook": os.getenv(
-            "WEBHOOK_GEMSTORE"
-        ),
+        "webhook": os.getenv("WEBHOOK_GEMSTORE"),
         "keywords": [
             "gem store",
             "sale",
@@ -152,20 +128,16 @@ FEEDS = {
 
     "blacklion": {
         "url": "https://www.guildwars2.com/en/feed",
-        "webhook": os.getenv(
-            "WEBHOOK_BLACKLION"
-        ),
+        "webhook": os.getenv("WEBHOOK_BLACKLION"),
         "keywords": [
             "black lion",
             "black lion chest"
         ]
     }
-
 }
 
 
 def matches(entry, keywords):
-
     if not keywords:
         return True
 
@@ -181,7 +153,6 @@ def matches(entry, keywords):
 
 
 def check_rss():
-
     state = load_state()
 
     if "posted" not in state:
@@ -193,7 +164,6 @@ def check_rss():
     )
 
     for name, cfg in FEEDS.items():
-
         feed = feedparser.parse(
             cfg["url"]
         )
@@ -201,7 +171,6 @@ def check_rss():
         for entry in reversed(
             feed.entries[:10]
         ):
-
             uid = (
                 f"{name}:"
                 f"{item_id(entry)}"
@@ -233,20 +202,14 @@ def check_rss():
             state["posted"].append(uid)
 
     state["initialized"] = True
-
-    state["posted"] = (
-        state["posted"][-500:]
-    )
+    state["posted"] = state["posted"][-500:]
 
     save_state(state)
 
 
 def scheduled_messages():
-
     now = datetime.datetime.now(
-        ZoneInfo(
-            "Europe/Athens"
-        )
+        ZoneInfo("Europe/Athens")
     )
 
     weekday = now.weekday()
@@ -257,9 +220,7 @@ def scheduled_messages():
         and now.minute < 30
     ):
         post(
-            os.getenv(
-                "WEBHOOK_DAILY_RESET"
-            ),
+            os.getenv("WEBHOOK_DAILY_RESET"),
             "🕒 Daily Reset Reminder",
             "Daily reset in one hour."
         )
@@ -271,9 +232,7 @@ def scheduled_messages():
         and now.minute < 30
     ):
         post(
-            os.getenv(
-                "WEBHOOK_WEEKLY_RESET"
-            ),
+            os.getenv("WEBHOOK_WEEKLY_RESET"),
             "📅 Weekly Reset",
             "Weekly content has reset."
         )
@@ -285,53 +244,27 @@ def scheduled_messages():
         and now.minute < 30
     ):
         post(
-            os.getenv(
-                "WEBHOOK_WVW_RESET"
-            ),
+            os.getenv("WEBHOOK_WVW_RESET"),
             "⚔️ WvW Reset Reminder",
             "WvW reset in 1 hour."
         )
 
-    # Guild reminder
-    if (
-        weekday == 6
-        and now.hour == 21
-        and now.minute < 30
-    ):
-        post(
-            os.getenv(
-                "WEBHOOK_GUILD_REMINDERS"
-            ),
-            "🏰 Guild Reminder",
-            "Guild missions reminder."
-        )
-
 
 WORLD_BOSS_ALERTS = [
-    (
-        "Tequatl the Sunless",
-        "21:30"
-    ),
-    (
-        "Triple Trouble",
-        "20:30"
-    ),
+    ("Tequatl the Sunless", "21:30"),
+    ("Triple Trouble", "20:30"),
 ]
 
 
 def world_boss_messages():
-
     now = datetime.datetime.now(
-        ZoneInfo(
-            "Europe/Athens"
-        )
+        ZoneInfo("Europe/Athens")
     ).replace(
         second=0,
         microsecond=0
     )
 
     for boss, boss_time_str in WORLD_BOSS_ALERTS:
-
         hour, minute = map(
             int,
             boss_time_str.split(":")
@@ -344,36 +277,23 @@ def world_boss_messages():
 
         alert_time = (
             boss_time
-            - datetime.timedelta(
-                minutes=30
-            )
+            - datetime.timedelta(minutes=30)
         )
 
         if (
-            now.hour
-            == alert_time.hour
-            and (
-                alert_time.minute
-                <= now.minute
-                < alert_time.minute + 30
-            )
+            now.hour == alert_time.hour
+            and alert_time.minute <= now.minute < alert_time.minute + 30
         ):
-
             post(
-                os.getenv(
-                    "WEBHOOK_WORLD_BOSSES"
-                ),
+                os.getenv("WEBHOOK_WORLD_BOSSES"),
                 f"🐉 {boss} in 30 minutes",
                 f"{boss} begins soon."
             )
 
 
 def daily_achievements():
-
     now = datetime.datetime.now(
-        ZoneInfo(
-            "Europe/Athens"
-        )
+        ZoneInfo("Europe/Athens")
     )
 
     if (
@@ -383,7 +303,6 @@ def daily_achievements():
         return
 
     try:
-
         r = requests.get(
             "https://api.guildwars2.com/v2/achievements/daily",
             timeout=15
@@ -392,60 +311,27 @@ def daily_achievements():
         data = r.json()
 
         pve = len(
-            data.get(
-                "pve",
-                []
-            )
+            data.get("pve", [])
         )
 
         fractals = len(
-            data.get(
-                "fractals",
-                []
-            )
+            data.get("fractals", [])
         )
 
         post(
-            os.getenv(
-                "WEBHOOK_DAILIES"
-            ),
+            os.getenv("WEBHOOK_DAILIES"),
             "✅ Daily Achievements Updated",
             f"PvE dailies: {pve}"
         )
 
         post(
-            os.getenv(
-                "WEBHOOK_FRACTALS"
-            ),
+            os.getenv("WEBHOOK_FRACTALS"),
             "🌀 Daily Fractals Updated",
             f"{fractals} fractal dailies available."
         )
 
     except Exception as e:
         print(e)
-
-
-def strike_rotation_reminder():
-
-    now = datetime.datetime.now(
-        ZoneInfo(
-            "Europe/Athens"
-        )
-    )
-
-    if (
-        now.weekday() == 0
-        and now.hour == 11
-        and now.minute < 30
-    ):
-
-        post(
-            os.getenv(
-                "WEBHOOK_STRIKES"
-            ),
-            "⚔️ Weekly Strike Rotation",
-            "Weekly strike rewards reset."
-        )
 
 
 ECONOMY_ITEMS = {
@@ -455,11 +341,8 @@ ECONOMY_ITEMS = {
 
 
 def economy_alerts():
-
     now = datetime.datetime.now(
-        ZoneInfo(
-            "Europe/Athens"
-        )
+        ZoneInfo("Europe/Athens")
     )
 
     if (
@@ -479,7 +362,6 @@ def economy_alerts():
     )
 
     try:
-
         r = requests.get(
             url,
             timeout=15
@@ -490,7 +372,6 @@ def economy_alerts():
         lines = []
 
         for item in prices:
-
             name = ECONOMY_ITEMS[
                 item["id"]
             ]
@@ -512,9 +393,7 @@ def economy_alerts():
             )
 
         post(
-            os.getenv(
-                "WEBHOOK_ECONOMY"
-            ),
+            os.getenv("WEBHOOK_ECONOMY"),
             "💰 Daily Economy Snapshot",
             "\n\n".join(lines)
         )
@@ -528,7 +407,6 @@ def main():
     scheduled_messages()
     world_boss_messages()
     daily_achievements()
-    strike_rotation_reminder()
     economy_alerts()
 
 
