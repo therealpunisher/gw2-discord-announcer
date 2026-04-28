@@ -125,18 +125,25 @@ def matches(entry, keywords):
 def check_rss():
     state = load_state()
 
-    for name, cfg in FEEDS.items():
+    if "posted" not in state:
+        state["posted"] = []
 
+    first_run = not state.get("initialized", False)
+
+    for name, cfg in FEEDS.items():
         feed = feedparser.parse(cfg["url"])
 
         for entry in reversed(feed.entries[:10]):
-
             uid = f"{name}:{item_id(entry)}"
 
             if uid in state["posted"]:
                 continue
 
             if not matches(entry, cfg["keywords"]):
+                continue
+
+            if first_run:
+                state["posted"].append(uid)
                 continue
 
             post(
@@ -148,6 +155,7 @@ def check_rss():
 
             state["posted"].append(uid)
 
+    state["initialized"] = True
     state["posted"] = state["posted"][-500:]
     save_state(state)
 
