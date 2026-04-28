@@ -9,7 +9,7 @@ def post(webhook, title, description, url=None):
 
     embed = {
         "title": title,
-        "description": description
+        "description": description[:3500]
     }
 
     if url:
@@ -32,27 +32,38 @@ def post(webhook, title, description, url=None):
         print(f"Error posting {title}: {e}")
 
 
-def test_world_boss_alerts():
+def test_dailies_and_fractals():
+    try:
+        r = requests.get(
+            "https://api.guildwars2.com/v2/achievements/daily",
+            timeout=15
+        )
 
-    post(
-        os.getenv(
-            "WEBHOOK_WORLD_BOSSES"
-        ),
-        "🐉 Tequatl in 30 minutes",
-        "Test world boss alert. Move to Sparkfly Fen."
-    )
+        data = r.json()
 
-    post(
-        os.getenv(
-            "WEBHOOK_WORLD_BOSSES"
-        ),
-        "⚠️ Triple Trouble begins soon",
-        "Test world boss alert. Squad up."
-    )
+        pve = len(data.get("pve", []))
+        pvp = len(data.get("pvp", []))
+        wvw = len(data.get("wvw", []))
+        fractals = len(data.get("fractals", []))
+
+        post(
+            os.getenv("WEBHOOK_DAILIES"),
+            "✅ Test Daily Achievements",
+            f"GW2 API is working.\n\nPvE dailies: {pve}\nPvP dailies: {pvp}\nWvW dailies: {wvw}\nFractal dailies: {fractals}"
+        )
+
+        post(
+            os.getenv("WEBHOOK_FRACTALS"),
+            "🌀 Test Daily Fractals",
+            f"GW2 API is working.\n\nFractal daily achievements available: {fractals}"
+        )
+
+    except Exception as e:
+        print(f"Failed to fetch GW2 daily achievements: {e}")
 
 
 def main():
-    test_world_boss_alerts()
+    test_dailies_and_fractals()
 
 
 if __name__ == "__main__":
