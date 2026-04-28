@@ -2,7 +2,7 @@ name: GW2 Discord Announcer
 
 on:
   schedule:
-    - cron: "*/30 * * * *"      # RSS/news checks every 30 minutes
+    - cron: "*/15 * * * *"      # RSS/news checks every 30 minutes
     - cron: "0 23 * * *"        # Daily reset reminder, adjust if needed
     - cron: "0 18 * * 5"        # WvW reset reminder example
     - cron: "0 8 * * 1"         # Weekly reset reminder example
