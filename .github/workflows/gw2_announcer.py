@@ -111,3 +111,30 @@ def main():
 
 if __name__ == "__main__":
     main()
+def scheduled_messages():
+    now = datetime.datetime.utcnow()
+    weekday = now.weekday()
+
+    # Daily reset reminder example
+    if now.hour == 23:
+        post(
+            os.getenv("WEBHOOK_DAILY_RESET"),
+            "🕒 Daily Reset Reminder",
+            "Daily reset is coming soon. Finish your dailies, Wizard's Vault tasks, and daily fractals."
+        )
+
+    # Weekly reset example, Monday UTC
+    if weekday == 0 and now.hour == 8:
+        post(
+            os.getenv("WEBHOOK_WEEKLY_RESET"),
+            "📅 Weekly Reset",
+            "Weekly raids, strikes, and other weekly content have reset."
+        )
+
+    # WvW reset reminder example, Friday
+    if weekday == 4 and now.hour == 18:
+        post(
+            os.getenv("WEBHOOK_WVW_RESET"),
+            "⚔️ WvW Reset Reminder",
+            "WvW reset is coming soon. Get your squad ready."
+        )
