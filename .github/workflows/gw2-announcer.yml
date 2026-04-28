@@ -1,0 +1,37 @@
+name: GW2 Discord Announcer
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"      # RSS/news checks every 30 minutes
+    - cron: "0 23 * * *"        # Daily reset reminder, adjust if needed
+    - cron: "0 18 * * 5"        # WvW reset reminder example
+    - cron: "0 8 * * 1"         # Weekly reset reminder example
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install feedparser requests
+      - run: python gw2_announcer.py
+        env:
+          WEBHOOK_GAME_UPDATES: ${{ secrets.WEBHOOK_GAME_UPDATES }}
+          WEBHOOK_PATCH_NOTES: ${{ secrets.WEBHOOK_PATCH_NOTES }}
+          WEBHOOK_FESTIVALS: ${{ secrets.WEBHOOK_FESTIVALS }}
+          WEBHOOK_BONUS_EVENTS: ${{ secrets.WEBHOOK_BONUS_EVENTS }}
+          WEBHOOK_LIVESTREAMS: ${{ secrets.WEBHOOK_LIVESTREAMS }}
+          WEBHOOK_DAILY_RESET: ${{ secrets.WEBHOOK_DAILY_RESET }}
+          WEBHOOK_WEEKLY_RESET: ${{ secrets.WEBHOOK_WEEKLY_RESET }}
+          WEBHOOK_WORLD_BOSSES: ${{ secrets.WEBHOOK_WORLD_BOSSES }}
+          WEBHOOK_WVW_RESET: ${{ secrets.WEBHOOK_WVW_RESET }}
+          WEBHOOK_DAILIES: ${{ secrets.WEBHOOK_DAILIES }}
+          WEBHOOK_FRACTALS: ${{ secrets.WEBHOOK_FRACTALS }}
+          WEBHOOK_STRIKES: ${{ secrets.WEBHOOK_STRIKES }}
+          WEBHOOK_GEMSTORE: ${{ secrets.WEBHOOK_GEMSTORE }}
+          WEBHOOK_ECONOMY: ${{ secrets.WEBHOOK_ECONOMY }}
+          WEBHOOK_BLACKLION: ${{ secrets.WEBHOOK_BLACKLION }}
+          WEBHOOK_GUILD_REMINDERS: ${{ secrets.WEBHOOK_GUILD_REMINDERS }}
