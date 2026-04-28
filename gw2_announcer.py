@@ -32,38 +32,51 @@ def post(webhook, title, description, url=None):
         print(f"Error posting {title}: {e}")
 
 
-def test_dailies_and_fractals():
-    try:
-        r = requests.get(
-            "https://api.guildwars2.com/v2/achievements/daily",
-            timeout=15
-        )
+ECONOMY_ITEMS = {
+    19976: "Mystic Coin",
+    19721: "Glob of Ectoplasm",
+}
 
+
+def test_economy_alerts():
+    ids = ",".join(str(i) for i in ECONOMY_ITEMS.keys())
+
+    url = (
+        "https://api.guildwars2.com/v2/commerce/prices?ids="
+        + ids
+    )
+
+    try:
+        r = requests.get(url, timeout=15)
         data = r.json()
 
-        pve = len(data.get("pve", []))
-        pvp = len(data.get("pvp", []))
-        wvw = len(data.get("wvw", []))
-        fractals = len(data.get("fractals", []))
+        lines = []
+
+        for item in data:
+            item_id = item["id"]
+            name = ECONOMY_ITEMS.get(item_id, f"Item {item_id}")
+
+            buy_price = item["buys"]["unit_price"] / 10000
+            sell_price = item["sells"]["unit_price"] / 10000
+
+            lines.append(
+                f"**{name}**\n"
+                f"Buy order: {buy_price:.2f}g\n"
+                f"Sell price: {sell_price:.2f}g"
+            )
 
         post(
-            os.getenv("WEBHOOK_DAILIES"),
-            "✅ Test Daily Achievements",
-            f"GW2 API is working.\n\nPvE dailies: {pve}\nPvP dailies: {pvp}\nWvW dailies: {wvw}\nFractal dailies: {fractals}"
-        )
-
-        post(
-            os.getenv("WEBHOOK_FRACTALS"),
-            "🌀 Test Daily Fractals",
-            f"GW2 API is working.\n\nFractal daily achievements available: {fractals}"
+            os.getenv("WEBHOOK_ECONOMY"),
+            "💰 Test Economy Prices",
+            "\n\n".join(lines)
         )
 
     except Exception as e:
-        print(f"Failed to fetch GW2 daily achievements: {e}")
+        print(f"Failed to fetch economy prices: {e}")
 
 
 def main():
-    test_dailies_and_fractals()
+    test_economy_alerts()
 
 
 if __name__ == "__main__":
