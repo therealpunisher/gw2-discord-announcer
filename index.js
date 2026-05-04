@@ -3,8 +3,9 @@ import { Client, GatewayIntentBits, EmbedBuilder } from "discord.js";
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
-const MARKER = "GW2_DAILIES_TRACKER_MESSAGE";
 const GW2_API = "https://api.guildwars2.com/v2";
+const GREECE_TIMEZONE = "Europe/Athens";
+const MARKER = "GW2_DAILIES_TRACKER_MESSAGE";
 
 if (!TOKEN || !CHANNEL_ID) {
   throw new Error("Missing DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID");
@@ -34,6 +35,19 @@ function nextResetUtc() {
   return reset;
 }
 
+function formatGreeceTime(date) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: GREECE_TIMEZONE,
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
 function timeUntil(date) {
   const ms = date - new Date();
   const h = Math.floor(ms / 3600000);
@@ -42,20 +56,26 @@ function timeUntil(date) {
 }
 
 function rotationIndex(length, offset = 0) {
-  const start = Date.UTC(2024, 0, 1) / 86400000;
+  const start = Math.floor(Date.UTC(2024, 0, 1) / 86400000);
   const today = Math.floor(Date.now() / 86400000);
-  return (today - start + offset) % length;
+  return ((today - start + offset) % length + length) % length;
 }
 
 async function gw2(path) {
   const res = await fetch(`${GW2_API}${path}`);
-  if (!res.ok) throw new Error(`GW2 API error: ${res.status}`);
+
+  if (!res.ok) {
+    throw new Error(`GW2 API error: ${res.status} ${res.statusText}`);
+  }
+
   return res.json();
 }
 
 async function getAchievementNames(ids) {
-  if (!ids.length) return [];
+  if (!ids || ids.length === 0) return [];
+
   const data = await gw2(`/achievements?ids=${ids.join(",")}`);
+
   return data.map(a => a.name);
 }
 
@@ -71,9 +91,9 @@ async function getDailies(path = "/achievements/daily") {
 
   const result = {};
 
-  for (const [name, entries] of Object.entries(sections)) {
-    const ids = entries.map(e => e.id);
-    result[name] = await getAchievementNames(ids);
+  for (const [sectionName, entries] of Object.entries(sections)) {
+    const ids = entries.map(entry => entry.id);
+    result[sectionName] = await getAchievementNames(ids);
   }
 
   return result;
@@ -81,7 +101,7 @@ async function getDailies(path = "/achievements/daily") {
 
 function formatList(items) {
   if (!items || items.length === 0) return "No data found.";
-  return items.map(x => `• ${x}`).join("\n");
+  return items.map(item => `• ${item}`).join("\n");
 }
 
 async function buildEmbed() {
@@ -99,49 +119,97 @@ async function buildEmbed() {
   return new EmbedBuilder()
     .setTitle("Guild Wars 2 Daily Tracker")
     .setDescription(
-      `Updates automatically.\nNext daily reset: **${reset.toUTCString()}**\nTime remaining: **${timeUntil(reset)}**\n\n${MARKER}`
+      `Updates automatically every 15 minutes.\n` +
+      `Next GW2 reset in Greece: **${formatGreeceTime(reset)}**\n` +
+      `Time remaining: **${timeUntil(reset)}**\n\n` +
+      `${MARKER}`
     )
     .addFields(
-      { name: "PvE Today", value: formatList(today.PvE), inline: false },
-      { name: "PvP Today", value: formatList(today.PvP), inline: false },
-      { name: "WvW Today", value: formatList(today.WvW), inline: false },
-      { name: "Fractals Today", value: formatList(today.Fractals), inline: false },
-      { name: "PSNA", value: `Today: **${psnaToday}**\nTomorrow: **${psnaTomorrow}**`, inline: false },
-      { name: "Strike Mission", value: `Today: **${strikeToday}**\nTomorrow: **${strikeTomorrow}**`, inline: false },
-      { name: "Coming Tomorrow", value: `PvE:\n${formatList(tomorrow.PvE)}\n\nPvP:\n${formatList(tomorrow.PvP)}\n\nWvW:\n${formatList(tomorrow.WvW)}\n\nFractals:\n${formatList(tomorrow.Fractals)}`, inline: false }
+      {
+        name: "PvE Today",
+        value: formatList(today.PvE),
+        inline: false
+      },
+      {
+        name: "PvP Today",
+        value: formatList(today.PvP),
+        inline: false
+      },
+      {
+        name: "WvW Today",
+        value: formatList(today.WvW),
+        inline: false
+      },
+      {
+        name: "Fractals Today",
+        value: formatList(today.Fractals),
+        inline: false
+      },
+      {
+        name: "PSNA",
+        value: `Today: **${psnaToday}**\nTomorrow: **${psnaTomorrow}**`,
+        inline: false
+      },
+      {
+        name: "Strike Mission",
+        value: `Today: **${strikeToday}**\nTomorrow: **${strikeTomorrow}**`,
+        inline: false
+      },
+      {
+        name: "Coming Tomorrow",
+        value:
+          `PvE:\n${formatList(tomorrow.PvE)}\n\n` +
+          `PvP:\n${formatList(tomorrow.PvP)}\n\n` +
+          `WvW:\n${formatList(tomorrow.WvW)}\n\n` +
+          `Fractals:\n${formatList(tomorrow.Fractals)}`,
+        inline: false
+      }
     )
-    .setFooter({ text: "Data from Guild Wars 2 API where available. PSNA/Strike rotation is local rotation logic." })
+    .setFooter({
+      text: "GW2 data from official API where available. PSNA/Strike use local rotation."
+    })
     .setTimestamp();
 }
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
+async function main() {
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent
+    ]
+  });
 
-client.once("ready", async () => {
-  const channel = await client.channels.fetch(CHANNEL_ID);
-  const embed = await buildEmbed();
+  client.once("ready", async () => {
+    try {
+      const channel = await client.channels.fetch(CHANNEL_ID);
+      const embed = await buildEmbed();
 
-  const messages = await channel.messages.fetch({ limit: 20 });
-  const existing = messages.find(
-    msg =>
-      msg.author.id === client.user.id &&
-      msg.embeds.some(e => e.description?.includes(MARKER))
-  );
+      const messages = await channel.messages.fetch({ limit: 20 });
 
-  if (existing) {
-    await existing.edit({ embeds: [embed] });
-    console.log("Updated existing GW2 daily message.");
-  } else {
-    await channel.send({ embeds: [embed] });
-    console.log("Sent new GW2 daily message.");
-  }
+      const existing = messages.find(message =>
+        message.author.id === client.user.id &&
+        message.embeds.some(embed =>
+          embed.description && embed.description.includes(MARKER)
+        )
+      );
 
-  client.destroy();
-});
+      if (existing) {
+        await existing.edit({ embeds: [embed] });
+        console.log("Updated existing GW2 daily message.");
+      } else {
+        await channel.send({ embeds: [embed] });
+        console.log("Sent new GW2 daily message.");
+      }
+    } catch (error) {
+      console.error(error);
+      process.exitCode = 1;
+    } finally {
+      client.destroy();
+    }
+  });
 
-client.login(TOKEN);
+  await client.login(TOKEN);
+}
+
+main();
