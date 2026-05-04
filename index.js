@@ -1,11 +1,21 @@
-import { Client, GatewayIntentBits, EmbedBuilder } from "discord.js";
+import {
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} from "discord.js";
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+const RESET_ROLE_ID = process.env.RESET_ROLE_ID || "";
 
 const API_BASE = "https://api.guildwars2.com/v2";
 const GREECE_TIMEZONE = "Europe/Athens";
-const MARKER = "GW2_DAILY_BOARD_MARKER";
+
+const BOARD_MARKER = "GW2_DAILY_BOARD_MARKER";
+const PING_MARKER = "GW2_DAILY_RESET_PING";
 
 if (!TOKEN || !CHANNEL_ID) {
   throw new Error("Missing DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID");
@@ -41,6 +51,15 @@ function greeceTime(date = new Date()) {
   }).format(date);
 }
 
+function greeceDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: GREECE_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
 function nextResetUtc() {
   const now = new Date();
   const reset = new Date(now);
@@ -48,9 +67,19 @@ function nextResetUtc() {
   return reset;
 }
 
+function lastResetUtc() {
+  const now = new Date();
+  const reset = new Date(now);
+  reset.setUTCHours(0, 0, 0, 0);
+  return reset;
+}
+
+function minutesSinceLastReset() {
+  return Math.floor((new Date() - lastResetUtc()) / 60000);
+}
+
 function timeUntil(date) {
   const ms = date - new Date();
-
   if (ms <= 0) return "now";
 
   const h = Math.floor(ms / 3600000);
@@ -74,9 +103,7 @@ async function api(path, retries = 2) {
       }
     });
 
-    if (!res.ok) {
-      throw new Error(`${res.status} ${res.statusText}`);
-    }
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
     return await res.json();
   } catch {
@@ -93,42 +120,37 @@ async function getAchievementNames(ids) {
   if (!ids || ids.length === 0) return [];
 
   const achievements = await api(`/achievements?ids=${ids.join(",")}`);
-
   if (!achievements) return [];
 
   return achievements.map(a => a.name || `Achievement ${a.id}`);
 }
 
 async function getFractals() {
-  const category = await api("/achievements/categories/88?v=latest");
+  const data = await api("/achievements/daily");
 
-  if (!category?.achievements) {
+  if (!data?.fractals) {
     return {
+      status: "unreliable",
       dailies: [],
-      recommendeds: [],
-      available: false
+      recommendeds: []
     };
   }
 
-  const names = await getAchievementNames(category.achievements);
+  const ids = data.fractals.map(f => f.id).filter(Boolean);
+  const names = await getAchievementNames(ids);
 
   if (!names.length) {
     return {
+      status: "unreliable",
       dailies: [],
-      recommendeds: [],
-      available: false
+      recommendeds: []
     };
   }
-
-  const dailyNames = names.filter(name =>
-    name.toLowerCase().includes("daily") &&
-    !name.toLowerCase().includes("tomorrow")
-  );
 
   const dailies = [];
   const recommendeds = [];
 
-  for (const name of dailyNames) {
+  for (const name of names) {
     const clean = cleanFractalName(name);
 
     if (name.toLowerCase().includes("recommended")) {
@@ -139,9 +161,9 @@ async function getFractals() {
   }
 
   return {
+    status: "available",
     dailies,
-    recommendeds,
-    available: dailies.length > 0 || recommendeds.length > 0
+    recommendeds
   };
 }
 
@@ -153,24 +175,52 @@ function cleanFractalName(name) {
     .trim();
 }
 
-function formatList(items) {
-  if (!items || items.length === 0) return "• Currently unreliable / unavailable.";
+function formatList(items, fallback = "Updates haven’t been made yet.") {
+  if (!items || items.length === 0) return `• ${fallback}`;
   return items.map(item => `• ${item}`).join("\n");
 }
 
 function shortText(text) {
-  if (!text) return "• Currently unreliable / unavailable.";
+  if (!text) return "—";
   return text.length > 1024 ? text.slice(0, 1020) + "..." : text;
 }
 
-async function deleteOldMessages(channel, client) {
+function buildButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel("PSNA Wiki")
+      .setEmoji("🛒")
+      .setStyle(ButtonStyle.Link)
+      .setURL("https://wiki.guildwars2.com/wiki/Pact_Supply_Network_Agent"),
+
+    new ButtonBuilder()
+      .setLabel("Strike Wiki")
+      .setEmoji("👹")
+      .setStyle(ButtonStyle.Link)
+      .setURL("https://wiki.guildwars2.com/wiki/Strike_Mission"),
+
+    new ButtonBuilder()
+      .setLabel("Fractal Wiki")
+      .setEmoji("🌀")
+      .setStyle(ButtonStyle.Link)
+      .setURL("https://wiki.guildwars2.com/wiki/Fractals_of_the_Mists"),
+
+    new ButtonBuilder()
+      .setLabel("Daily Reset")
+      .setEmoji("🔄")
+      .setStyle(ButtonStyle.Link)
+      .setURL("https://wiki.guildwars2.com/wiki/Server_reset")
+  );
+}
+
+async function deleteOldBoardMessages(channel, client) {
   const messages = await channel.messages.fetch({ limit: 50 });
 
   const oldMessages = messages.filter(message =>
     message.author.id === client.user.id &&
     message.embeds.some(embed =>
-      embed.description?.includes(MARKER) ||
-      embed.footer?.text?.includes(MARKER)
+      embed.description?.includes(BOARD_MARKER) ||
+      embed.footer?.text?.includes(BOARD_MARKER)
     )
   );
 
@@ -179,9 +229,35 @@ async function deleteOldMessages(channel, client) {
   }
 }
 
+async function sendResetPingIfNeeded(channel, client) {
+  if (!RESET_ROLE_ID) return;
+
+  const mins = minutesSinceLastReset();
+
+  if (mins < 0 || mins > 20) return;
+
+  const todayKey = greeceDateKey();
+  const pingKey = `${PING_MARKER}_${todayKey}`;
+
+  const messages = await channel.messages.fetch({ limit: 100 });
+
+  const alreadyPinged = messages.some(message =>
+    message.author.id === client.user.id &&
+    message.content.includes(pingKey)
+  );
+
+  if (alreadyPinged) return;
+
+  await channel.send({
+    content:
+      `<@&${RESET_ROLE_ID}> 🔄 **Daily reset is live!**\n` +
+      `New PSNA, Strike, and Fractal rotation is available.\n\n` +
+      `||${pingKey}||`
+  });
+}
+
 async function buildEmbed() {
   const reset = nextResetUtc();
-
   const fractals = await getFractals();
 
   const psnaToday = PSNA_ROTATION[rotationIndex(PSNA_ROTATION.length)];
@@ -190,9 +266,19 @@ async function buildEmbed() {
   const strikeToday = DAILY_STRIKES[rotationIndex(DAILY_STRIKES.length)];
   const strikeTomorrow = DAILY_STRIKES[rotationIndex(DAILY_STRIKES.length, 1)];
 
-  const fractalText = fractals.available
-    ? `🌀 **Dailies**\n${formatList(fractals.dailies)}\n\n⭐ **Recommendeds**\n${formatList(fractals.recommendeds)}`
-    : `🌀 **Fractals are currently unreliable / unavailable.**\nThe tracker will refresh them again after reset.`;
+  const fractalStatus =
+    fractals.status === "available"
+      ? "🟢 **Available**"
+      : "🟡 **Unreliable right now**";
+
+  const fractalText =
+    fractals.status === "available"
+      ? `**Status:** ${fractalStatus}\n\n` +
+        `🌀 **Dailies**\n${formatList(fractals.dailies)}\n\n` +
+        `⭐ **Recommendeds**\n${formatList(fractals.recommendeds)}`
+      : `**Status:** ${fractalStatus}\n\n` +
+        `• Fractal updates haven’t refreshed yet.\n` +
+        `• This section will update automatically when the data is available.`;
 
   return new EmbedBuilder()
     .setColor(0xf2b632)
@@ -201,20 +287,16 @@ async function buildEmbed() {
       `🕒 **Now:** ${greeceTime()}\n` +
       `🔄 **Reset:** ${greeceTime(reset)}\n` +
       `⏳ **Time Left:** **${timeUntil(reset)}**\n\n` +
-      `${MARKER}`
+      `${BOARD_MARKER}`
     )
+    .setThumbnail("https://wiki.guildwars2.com/images/thumb/9/93/GW2Logo_new.png/128px-GW2Logo_new.png")
     .addFields(
-      {
-        name: "🌀 **Fractals**",
-        value: shortText(fractalText),
-        inline: false
-      },
       {
         name: "🛒 **PSNA**",
         value:
           `📍 **Today:** ${psnaToday}\n` +
           `➡️ **Tomorrow:** ${psnaTomorrow}\n\n` +
-          `**What is PSNA?**\n` +
+          `**What is it?**\n` +
           `A daily rotating **Pact Supply Network Agent** vendor.`,
         inline: false
       },
@@ -223,13 +305,31 @@ async function buildEmbed() {
         value:
           `🎯 **Today:** ${strikeToday}\n` +
           `➡️ **Tomorrow:** ${strikeTomorrow}\n\n` +
-          `**What is a Strike?**\n` +
+          `**What is it?**\n` +
           `A **10-player boss mission** with daily rewards.`,
+        inline: false
+      },
+      {
+        name: "🌀 **Fractals**",
+        value: shortText(fractalText),
+        inline: false
+      },
+      {
+        name: "📌 **Quick View**",
+        value:
+          `🛒 **PSNA:** ${psnaToday}\n` +
+          `👹 **Strike:** ${strikeToday}\n` +
+          `🌀 **Fractals:** ${fractals.status === "available" ? "Available" : "Unreliable"}`,
+        inline: false
+      },
+      {
+        name: "🕘 **Last Updated**",
+        value: `**${greeceTime()}**`,
         inline: false
       }
     )
     .setFooter({
-      text: `GW2 Daily Board • ${MARKER}`
+      text: `GW2 Daily Board • ${BOARD_MARKER}`
     })
     .setTimestamp();
 }
@@ -246,10 +346,17 @@ async function main() {
   client.once("clientReady", async () => {
     try {
       const channel = await client.channels.fetch(CHANNEL_ID);
-      const embed = await buildEmbed();
 
-      await deleteOldMessages(channel, client);
-      await channel.send({ embeds: [embed] });
+      await sendResetPingIfNeeded(channel, client);
+
+      const embed = await buildEmbed();
+      const buttons = buildButtons();
+
+      await deleteOldBoardMessages(channel, client);
+      await channel.send({
+        embeds: [embed],
+        components: [buttons]
+      });
 
       console.log("Daily board posted.");
     } catch (error) {
