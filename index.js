@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, EmbedBuilder } from "discord.js";
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+const GW2_API_KEY = process.env.GW2_API_KEY || "";
 
 const API_BASE = "https://api.guildwars2.com/v2";
 const GREECE_TIMEZONE = "Europe/Athens";
@@ -23,31 +24,13 @@ const PSNA_ROTATION = [
 const DAILY_STRIKES = [
   "Shiverpeaks Pass",
   "Fraenir of Jormag",
-  "Voice & Claw",
+  "Voice of the Fallen and Claw of the Fallen",
   "Boneskinner",
-  "Whisper of Jormag"
+  "Whisper of Jormag",
+  "Cold War"
 ];
 
-function nowGreece() {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: GREECE_TIMEZONE,
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).format(new Date());
-}
-
-function nextResetUtc() {
-  const now = new Date();
-  const reset = new Date(now);
-  reset.setUTCHours(24, 0, 0, 0);
-  return reset;
-}
-
-function formatGreeceTime(date) {
+function getGreekDate(date = new Date()) {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: GREECE_TIMEZONE,
     weekday: "short",
@@ -59,8 +42,16 @@ function formatGreeceTime(date) {
   }).format(date);
 }
 
+function nextResetUtc() {
+  const now = new Date();
+  const reset = new Date(now);
+  reset.setUTCHours(24, 0, 0, 0);
+  return reset;
+}
+
 function timeUntil(date) {
   const ms = date - new Date();
+
   if (ms <= 0) return "now";
 
   const h = Math.floor(ms / 3600000);
@@ -72,6 +63,7 @@ function timeUntil(date) {
 function rotationIndex(length, offset = 0) {
   const start = Math.floor(Date.UTC(2024, 0, 1) / 86400000);
   const today = Math.floor(Date.now() / 86400000);
+
   return ((today - start + offset) % length + length) % length;
 }
 
@@ -88,7 +80,7 @@ async function api(path, retries = 2) {
     }
 
     return await res.json();
-  } catch (error) {
+  } catch {
     if (retries > 0) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       return api(path, retries - 1);
@@ -98,29 +90,90 @@ async function api(path, retries = 2) {
   }
 }
 
-async function getAchievementNames(entries) {
-  if (!entries || entries.length === 0) return [];
-
-  const ids = entries.map(entry => entry.id).filter(Boolean);
-  if (ids.length === 0) return [];
+async function getAchievementNames(ids) {
+  if (!ids || ids.length === 0) return [];
 
   const achievements = await api(`/achievements?ids=${ids.join(",")}`);
+
   if (!achievements) return [];
 
-  return entries.map(entry => {
-    const achievement = achievements.find(a => a.id === entry.id);
-    return achievement?.name ?? `Achievement ${entry.id}`;
-  });
+  return achievements.map(a => a.name || `Achievement ${a.id}`);
+}
+
+async function getWizardVaultDailies() {
+  if (!GW2_API_KEY) {
+    return {
+      pve: ["Updates haven’t been made yet."],
+      pvp: ["Updates haven’t been made yet."],
+      wvw: ["Updates haven’t been made yet."]
+    };
+  }
+
+  const data = await api(`/account/wizardsvault/daily?access_token=${GW2_API_KEY}`);
+
+  if (!data?.objectives) {
+    return {
+      pve: ["Updates haven’t been made yet."],
+      pvp: ["Updates haven’t been made yet."],
+      wvw: ["Updates haven’t been made yet."]
+    };
+  }
+
+  const ids = data.objectives.map(o => o.id).filter(Boolean);
+  const names = await getAchievementNames(ids);
+
+  if (names.length === 0) {
+    return {
+      pve: ["Updates haven’t been made yet."],
+      pvp: ["Updates haven’t been made yet."],
+      wvw: ["Updates haven’t been made yet."]
+    };
+  }
+
+  return {
+    pve: names.filter(x => !x.toLowerCase().includes("pvp") && !x.toLowerCase().includes("wvw")),
+    pvp: names.filter(x => x.toLowerCase().includes("pvp")),
+    wvw: names.filter(x => x.toLowerCase().includes("wvw"))
+  };
 }
 
 async function getFractals() {
-  const daily = await api("/achievements/daily");
+  const data = await api("/achievements/daily");
 
-  if (!daily?.fractals) {
-    return [];
+  if (!data?.fractals) {
+    return {
+      dailies: ["Updates haven’t been made yet."],
+      recommendeds: ["Updates haven’t been made yet."]
+    };
   }
 
-  return getAchievementNames(daily.fractals);
+  const ids = data.fractals.map(f => f.id).filter(Boolean);
+  const names = await getAchievementNames(ids);
+
+  if (names.length === 0) {
+    return {
+      dailies: ["Updates haven’t been made yet."],
+      recommendeds: ["Updates haven’t been made yet."]
+    };
+  }
+
+  const dailies = [];
+  const recommendeds = [];
+
+  for (const name of names) {
+    const clean = cleanFractalName(name);
+
+    if (name.toLowerCase().includes("recommended")) {
+      recommendeds.push(clean);
+    } else {
+      dailies.push(clean);
+    }
+  }
+
+  return {
+    dailies: dailies.length ? dailies : ["Updates haven’t been made yet."],
+    recommendeds: recommendeds.length ? recommendeds : ["Updates haven’t been made yet."]
+  };
 }
 
 function cleanFractalName(name) {
@@ -131,39 +184,13 @@ function cleanFractalName(name) {
     .trim();
 }
 
-function formatFractals(names) {
-  if (!names || names.length === 0) {
-    return "🌀 **Fractals:** updating soon";
-  }
-
-  const recommended = [];
-  const dailies = [];
-
-  for (const name of names) {
-    const cleaned = cleanFractalName(name);
-
-    if (name.toLowerCase().includes("recommended")) {
-      recommended.push(cleaned);
-    } else {
-      dailies.push(cleaned);
-    }
-  }
-
-  const parts = [];
-
-  if (dailies.length > 0) {
-    parts.push(`🌀 **Dailies**\n${dailies.map(x => `• ${x}`).join("\n")}`);
-  }
-
-  if (recommended.length > 0) {
-    parts.push(`⭐ **Recommendeds**\n${recommended.map(x => `• ${x}`).join("\n")}`);
-  }
-
-  return parts.join("\n\n") || "🌀 **Fractals:** updating soon";
+function formatList(items) {
+  if (!items || items.length === 0) return "• Updates haven’t been made yet.";
+  return items.map(x => `• ${x}`).join("\n");
 }
 
 function shortText(text) {
-  if (!text) return "—";
+  if (!text) return "• Updates haven’t been made yet.";
   return text.length > 1024 ? text.slice(0, 1020) + "..." : text;
 }
 
@@ -186,6 +213,7 @@ async function deleteOldMessages(channel, client) {
 async function buildEmbed() {
   const reset = nextResetUtc();
 
+  const vault = await getWizardVaultDailies();
   const fractals = await getFractals();
 
   const psnaToday = PSNA_ROTATION[rotationIndex(PSNA_ROTATION.length)];
@@ -196,17 +224,35 @@ async function buildEmbed() {
 
   return new EmbedBuilder()
     .setColor(0xf2b632)
-    .setTitle("⚔️ **Guild Wars 2 Daily Board**")
+    .setTitle("⚔️ Guild Wars 2 Daily Board")
     .setDescription(
-      `🕒 **Now:** ${nowGreece()}\n` +
-      `🔄 **Reset:** ${formatGreeceTime(reset)}\n` +
-      `⏳ **Time left:** ${timeUntil(reset)}\n\n` +
+      `🕒 **Now:** ${getGreekDate()}\n` +
+      `🔄 **Reset:** ${getGreekDate(reset)}\n` +
+      `⏳ **Time left:** **${timeUntil(reset)}**\n\n` +
       `${MARKER}`
     )
     .addFields(
       {
+        name: "🌿 **PvE**",
+        value: shortText(formatList(vault.pve)),
+        inline: false
+      },
+      {
+        name: "⚔️ **PvP**",
+        value: shortText(formatList(vault.pvp)),
+        inline: false
+      },
+      {
+        name: "🏰 **WvW**",
+        value: shortText(formatList(vault.wvw)),
+        inline: false
+      },
+      {
         name: "🌀 **Fractals**",
-        value: shortText(formatFractals(fractals)),
+        value: shortText(
+          `**Dailies**\n${formatList(fractals.dailies)}\n\n` +
+          `⭐ **Recommendeds**\n${formatList(fractals.recommendeds)}`
+        ),
         inline: false
       },
       {
