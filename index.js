@@ -3,11 +3,9 @@ import { Client, GatewayIntentBits, EmbedBuilder } from "discord.js";
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
-const GW2_API_ROOT = "https://api.guildwars2.com/";
-const GW2_API = new URL("/v2", GW2_API_ROOT).toString();
-
+const API_BASE = "https://api.guildwars2.com/v2";
 const GREECE_TIMEZONE = "Europe/Athens";
-const MARKER = "GW2_DAILIES_TRACKER_MESSAGE";
+const MARKER = "GW2_DAILY_BOARD_MARKER";
 
 if (!TOKEN || !CHANNEL_ID) {
   throw new Error("Missing DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID");
@@ -30,6 +28,18 @@ const DAILY_STRIKES = [
   "Whisper of Jormag"
 ];
 
+function nowGreece() {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: GREECE_TIMEZONE,
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(new Date());
+}
+
 function nextResetUtc() {
   const now = new Date();
   const reset = new Date(now);
@@ -40,10 +50,9 @@ function nextResetUtc() {
 function formatGreeceTime(date) {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: GREECE_TIMEZONE,
-    weekday: "long",
+    weekday: "short",
     day: "2-digit",
-    month: "long",
-    year: "numeric",
+    month: "short",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false
@@ -52,8 +61,7 @@ function formatGreeceTime(date) {
 
 function timeUntil(date) {
   const ms = date - new Date();
-
-  if (ms <= 0) return "Resetting now";
+  if (ms <= 0) return "now";
 
   const h = Math.floor(ms / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
@@ -67,162 +75,118 @@ function rotationIndex(length, offset = 0) {
   return ((today - start + offset) % length + length) % length;
 }
 
-async function gw2(path, retries = 3) {
+async function api(path, retries = 2) {
   try {
-    const url = `${GW2_API}${path}`;
-
-    const res = await fetch(url, {
+    const res = await fetch(`${API_BASE}${path}`, {
       headers: {
-        "User-Agent": "GW2 Discord Daily Tracker"
+        "User-Agent": "GW2 Daily Board"
       }
     });
 
     if (!res.ok) {
-      throw new Error(`GW2 API ${res.status} ${res.statusText}`);
+      throw new Error(`${res.status} ${res.statusText}`);
     }
 
     return await res.json();
-  } catch (err) {
+  } catch (error) {
     if (retries > 0) {
-      console.log(`Retrying GW2 API... ${path} (${retries})`);
-      await new Promise(resolve => setTimeout(resolve, 2500));
-      return gw2(path, retries - 1);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return api(path, retries - 1);
     }
 
-    console.error(`GW2 API failed for ${path}:`, err.message);
     return null;
   }
 }
 
-async function getAchievementDetails(entries) {
+async function getAchievementNames(entries) {
   if (!entries || entries.length === 0) return [];
 
-  const ids = entries.map(entry => entry.id);
-  const achievements = await gw2(`/achievements?ids=${ids.join(",")}`);
+  const ids = entries.map(entry => entry.id).filter(Boolean);
+  if (ids.length === 0) return [];
 
+  const achievements = await api(`/achievements?ids=${ids.join(",")}`);
   if (!achievements) return [];
 
   return entries.map(entry => {
     const achievement = achievements.find(a => a.id === entry.id);
-
-    return {
-      id: entry.id,
-      name: achievement?.name ?? `Achievement ${entry.id}`,
-      requirement: achievement?.requirement ?? "",
-      description: achievement?.description ?? "",
-      level: entry.level ?? null
-    };
+    return achievement?.name ?? `Achievement ${entry.id}`;
   });
 }
 
-async function getFractalsToday() {
-  const data = await gw2("/achievements/daily");
+async function getFractals() {
+  const daily = await api("/achievements/daily");
 
-  if (!data || !data.fractals) {
+  if (!daily?.fractals) {
     return [];
   }
 
-  return getAchievementDetails(data.fractals);
-}
-
-function fractalTierFromName(name) {
-  const match = name.match(/Scale\s+(\d+)/i);
-
-  if (!match) return "Other";
-
-  const scale = Number(match[1]);
-
-  if (scale <= 25) return "T1";
-  if (scale <= 50) return "T2";
-  if (scale <= 75) return "T3";
-  if (scale <= 100) return "T4";
-
-  return "Other";
+  return getAchievementNames(daily.fractals);
 }
 
 function cleanFractalName(name) {
   return name
-    .replace("Daily Recommended Fractal—", "Recommended: ")
-    .replace("Daily Recommended Fractal - ", "Recommended: ")
-    .replace("Daily Fractal—", "")
-    .replace("Daily Fractal - ", "")
+    .replace(/Daily Recommended Fractal[—-]\s*/i, "")
+    .replace(/Daily Fractal[—-]\s*/i, "")
+    .replace(/Daily\s+/i, "")
     .trim();
 }
 
-function formatFractals(fractals) {
-  if (!fractals || fractals.length === 0) {
-    return (
-      "⚠️ **Fractal data unavailable right now.**\n" +
-      "The official GW2 daily endpoint sometimes fails.\n" +
-      "The bot will try again on the next scheduled update."
-    );
+function formatFractals(names) {
+  if (!names || names.length === 0) {
+    return "🌀 **Fractals:** updating soon";
   }
 
   const recommended = [];
-  const tiers = {
-    T1: [],
-    T2: [],
-    T3: [],
-    T4: [],
-    Other: []
-  };
+  const dailies = [];
 
-  for (const fractal of fractals) {
-    const cleaned = cleanFractalName(fractal.name);
+  for (const name of names) {
+    const cleaned = cleanFractalName(name);
 
-    if (fractal.name.toLowerCase().includes("recommended")) {
+    if (name.toLowerCase().includes("recommended")) {
       recommended.push(cleaned);
     } else {
-      const tier = fractalTierFromName(fractal.name);
-      tiers[tier].push(cleaned);
+      dailies.push(cleaned);
     }
   }
 
-  let output = "";
+  const parts = [];
+
+  if (dailies.length > 0) {
+    parts.push(`🌀 **Dailies**\n${dailies.map(x => `• ${x}`).join("\n")}`);
+  }
 
   if (recommended.length > 0) {
-    output += "⭐ **Recommended Fractals**\n";
-    output += recommended.map(x => `> ${x}`).join("\n");
-    output += "\n\n";
+    parts.push(`⭐ **Recommendeds**\n${recommended.map(x => `• ${x}`).join("\n")}`);
   }
 
-  for (const [tier, items] of Object.entries(tiers)) {
-    if (items.length > 0) {
-      output += `🔹 **${tier} Daily Fractals**\n`;
-      output += items.map(x => `> ${x}`).join("\n");
-      output += "\n\n";
-    }
-  }
-
-  return output.trim() || "No fractal data found.";
+  return parts.join("\n\n") || "🌀 **Fractals:** updating soon";
 }
 
 function shortText(text) {
-  if (!text) return "No data.";
+  if (!text) return "—";
   return text.length > 1024 ? text.slice(0, 1020) + "..." : text;
 }
 
-async function deleteOldTrackerMessages(channel, client) {
+async function deleteOldMessages(channel, client) {
   const messages = await channel.messages.fetch({ limit: 50 });
 
   const oldMessages = messages.filter(message =>
     message.author.id === client.user.id &&
     message.embeds.some(embed =>
-      embed.description && embed.description.includes(MARKER)
+      embed.description?.includes(MARKER) ||
+      embed.footer?.text?.includes(MARKER)
     )
   );
 
   for (const message of oldMessages.values()) {
-    await message.delete().catch(error => {
-      console.log(`Could not delete old tracker message: ${error.message}`);
-    });
+    await message.delete().catch(() => {});
   }
 }
 
 async function buildEmbed() {
   const reset = nextResetUtc();
 
-  const fractalsToday = await getFractalsToday();
+  const fractals = await getFractals();
 
   const psnaToday = PSNA_ROTATION[rotationIndex(PSNA_ROTATION.length)];
   const psnaTomorrow = PSNA_ROTATION[rotationIndex(PSNA_ROTATION.length, 1)];
@@ -231,57 +195,37 @@ async function buildEmbed() {
   const strikeTomorrow = DAILY_STRIKES[rotationIndex(DAILY_STRIKES.length, 1)];
 
   return new EmbedBuilder()
-    .setColor(0xf6c343)
-    .setAuthor({
-      name: "Guild Wars 2 Daily Board",
-      iconURL: "https://wiki.guildwars2.com/images/thumb/9/93/GW2Logo_new.png/64px-GW2Logo_new.png"
-    })
-    .setTitle("⚔️ Today’s Guild Wars 2 Rotation")
+    .setColor(0xf2b632)
+    .setTitle("⚔️ **Guild Wars 2 Daily Board**")
     .setDescription(
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `🌍 **Region Time:** Greece / Europe Athens\n` +
-      `🔄 **Next Reset:** **${formatGreeceTime(reset)}**\n` +
-      `⏳ **Time Left:** **${timeUntil(reset)}**\n` +
-      `🕒 **Auto Update:** Every 15 minutes\n` +
-      `🧹 **Mode:** Deletes old tracker message + sends fresh one\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `⚠️ **Note:** Wizard’s Vault PvE / PvP / WvW dailies are not reliably available from the official API.\n\n` +
+      `🕒 **Now:** ${nowGreece()}\n` +
+      `🔄 **Reset:** ${formatGreeceTime(reset)}\n` +
+      `⏳ **Time left:** ${timeUntil(reset)}\n\n` +
       `${MARKER}`
     )
     .addFields(
       {
-        name: "🌀 Fractals",
-        value: shortText(formatFractals(fractalsToday)),
+        name: "🌀 **Fractals**",
+        value: shortText(formatFractals(fractals)),
         inline: false
       },
       {
-        name: "🛒 Pact Supply Network Agent",
+        name: "🛒 **PSNA**",
         value:
           `📍 **Today:** ${psnaToday}\n` +
-          `➡️ **Tomorrow:** ${psnaTomorrow}\n\n` +
-          `💡 Check the PSNA vendor for rotating map purchases.`,
-        inline: false
+          `➡️ **Tomorrow:** ${psnaTomorrow}`,
+        inline: true
       },
       {
-        name: "👹 Daily Strike Mission",
+        name: "👹 **Strike**",
         value:
           `🎯 **Today:** ${strikeToday}\n` +
-          `➡️ **Tomorrow:** ${strikeTomorrow}\n\n` +
-          `💡 Good daily group content for prophet shards and strike rewards.`,
-        inline: false
-      },
-      {
-        name: "📌 Quick Reminders",
-        value:
-          `• Daily reset is based on **00:00 UTC**.\n` +
-          `• Greece reset time changes with daylight saving time.\n` +
-          `• This message refreshes automatically from GitHub Actions.\n` +
-          `• If fractals say unavailable, the GW2 API is probably failing temporarily.`,
-        inline: false
+          `➡️ **Tomorrow:** ${strikeTomorrow}`,
+        inline: true
       }
     )
     .setFooter({
-      text: "Guild Wars 2 Tracker • Fresh post mode"
+      text: `GW2 Daily Board • ${MARKER}`
     })
     .setTimestamp();
 }
@@ -300,10 +244,10 @@ async function main() {
       const channel = await client.channels.fetch(CHANNEL_ID);
       const embed = await buildEmbed();
 
-      await deleteOldTrackerMessages(channel, client);
+      await deleteOldMessages(channel, client);
       await channel.send({ embeds: [embed] });
 
-      console.log("Deleted old tracker message and sent a fresh one.");
+      console.log("Daily board posted.");
     } catch (error) {
       console.error(error);
       process.exitCode = 1;
