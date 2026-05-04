@@ -253,7 +253,7 @@ async function buildEmbed() {
       }
     )
     .setFooter({
-      text: "Guild Wars 2 Daily Tracker • Updates same Discord message"
+      text: "Guild Wars 2 Daily Tracker • live updates"
     })
     .setTimestamp();
 }
