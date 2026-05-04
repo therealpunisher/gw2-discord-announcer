@@ -61,47 +61,127 @@ function rotationIndex(length, offset = 0) {
   return ((today - start + offset) % length + length) % length;
 }
 
-async function gw2(path) {
-  const res = await fetch(`${GW2_API}${path}`);
+async function gw2(path, retries = 3) {
+  try {
+    const res = await fetch(`${GW2_API}${path}`);
 
-  if (!res.ok) {
-    throw new Error(`GW2 API error: ${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      throw new Error(`Status ${res.status}`);
+    }
+
+    return await res.json();
+  } catch (err) {
+    if (retries > 0) {
+      console.log(`Retrying GW2 API... (${retries})`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return gw2(path, retries - 1);
+    }
+
+    console.error(`GW2 API failed for ${path}:`, err.message);
+    return null;
   }
-
-  return res.json();
 }
 
-async function getAchievementNames(ids) {
-  if (!ids || ids.length === 0) return [];
+async function getAchievementDetails(entries) {
+  if (!entries || entries.length === 0) return [];
 
-  const data = await gw2(`/achievements?ids=${ids.join(",")}`);
+  const ids = entries.map(entry => entry.id);
+  const achievements = await gw2(`/achievements?ids=${ids.join(",")}`);
 
-  return data.map(a => a.name);
+  if (!achievements) {
+    return [{ name: "API unavailable" }];
+  }
+
+  return entries.map(entry => {
+    const achievement = achievements.find(a => a.id === entry.id);
+
+    return {
+      id: entry.id,
+      name: achievement?.name ?? `Achievement ${entry.id}`,
+      level: entry.level ?? null
+    };
+  });
 }
 
 async function getDailies(path = "/achievements/daily") {
   const data = await gw2(path);
 
-  const sections = {
-    PvE: data.pve ?? [],
-    PvP: data.pvp ?? [],
-    WvW: data.wvw ?? [],
-    Fractals: data.fractals ?? []
-  };
-
-  const result = {};
-
-  for (const [sectionName, entries] of Object.entries(sections)) {
-    const ids = entries.map(entry => entry.id);
-    result[sectionName] = await getAchievementNames(ids);
+  if (!data) {
+    return {
+      PvE: [{ name: "API unavailable" }],
+      PvP: [{ name: "API unavailable" }],
+      WvW: [{ name: "API unavailable" }],
+      Fractals: [{ name: "API unavailable" }]
+    };
   }
 
-  return result;
+  return {
+    PvE: await getAchievementDetails(data.pve ?? []),
+    PvP: await getAchievementDetails(data.pvp ?? []),
+    WvW: await getAchievementDetails(data.wvw ?? []),
+    Fractals: await getAchievementDetails(data.fractals ?? [])
+  };
 }
 
-function formatList(items) {
+function formatSimpleList(items) {
   if (!items || items.length === 0) return "No data found.";
-  return items.map(item => `• ${item}`).join("\n");
+  return items.map(item => `• ${item.name}`).join("\n");
+}
+
+function fractalTier(level) {
+  if (!level) return "Other";
+
+  const max = level.max ?? level.min ?? 0;
+
+  if (max <= 25) return "T1";
+  if (max <= 50) return "T2";
+  if (max <= 75) return "T3";
+  if (max <= 100) return "T4";
+
+  return "Other";
+}
+
+function formatFractals(fractals) {
+  if (!fractals || fractals.length === 0) return "No fractal data found.";
+
+  const recommended = [];
+  const tiers = {
+    T1: [],
+    T2: [],
+    T3: [],
+    T4: [],
+    Other: []
+  };
+
+  for (const fractal of fractals) {
+    const name = fractal.name;
+
+    if (name.toLowerCase().includes("recommended")) {
+      recommended.push(name);
+      continue;
+    }
+
+    const tier = fractalTier(fractal.level);
+    tiers[tier].push(name);
+  }
+
+  let output = "";
+
+  if (recommended.length > 0) {
+    output += `⭐ **Recommendeds**\n${recommended.map(x => `• ${x}`).join("\n")}\n\n`;
+  }
+
+  for (const [tier, items] of Object.entries(tiers)) {
+    if (items.length > 0) {
+      output += `🔹 **${tier}**\n${items.map(x => `• ${x}`).join("\n")}\n\n`;
+    }
+  }
+
+  return output.trim() || "No fractal data found.";
+}
+
+function shortText(text) {
+  return text.length > 1024 ? text.slice(0, 1020) + "..." : text;
 }
 
 async function buildEmbed() {
@@ -117,56 +197,63 @@ async function buildEmbed() {
   const strikeTomorrow = DAILY_STRIKES[rotationIndex(DAILY_STRIKES.length, 1)];
 
   return new EmbedBuilder()
-    .setTitle("Guild Wars 2 Daily Tracker")
+    .setColor(0xffcc00)
+    .setTitle("⚔️ Guild Wars 2 Daily Tracker")
     .setDescription(
-      `Updates automatically every 15 minutes.\n` +
-      `Next GW2 reset in Greece: **${formatGreeceTime(reset)}**\n` +
-      `Time remaining: **${timeUntil(reset)}**\n\n` +
+      `🕒 **Updates:** Every 15 minutes\n` +
+      `🌍 **Timezone:** Greece / Europe Athens\n` +
+      `🔄 **Next Reset:** **${formatGreeceTime(reset)}**\n` +
+      `⏳ **Time Remaining:** **${timeUntil(reset)}**\n\n` +
       `${MARKER}`
     )
     .addFields(
       {
-        name: "PvE Today",
-        value: formatList(today.PvE),
+        name: "🌿 PvE Dailies",
+        value: shortText(formatSimpleList(today.PvE)),
         inline: false
       },
       {
-        name: "PvP Today",
-        value: formatList(today.PvP),
+        name: "⚔️ PvP Dailies",
+        value: shortText(formatSimpleList(today.PvP)),
         inline: false
       },
       {
-        name: "WvW Today",
-        value: formatList(today.WvW),
+        name: "🏰 WvW Dailies",
+        value: shortText(formatSimpleList(today.WvW)),
         inline: false
       },
       {
-        name: "Fractals Today",
-        value: formatList(today.Fractals),
+        name: "🌀 Fractals + Recommendeds",
+        value: shortText(formatFractals(today.Fractals)),
         inline: false
       },
       {
-        name: "PSNA",
-        value: `Today: **${psnaToday}**\nTomorrow: **${psnaTomorrow}**`,
-        inline: false
-      },
-      {
-        name: "Strike Mission",
-        value: `Today: **${strikeToday}**\nTomorrow: **${strikeTomorrow}**`,
-        inline: false
-      },
-      {
-        name: "Coming Tomorrow",
+        name: "🛒 PSNA",
         value:
-          `PvE:\n${formatList(tomorrow.PvE)}\n\n` +
-          `PvP:\n${formatList(tomorrow.PvP)}\n\n` +
-          `WvW:\n${formatList(tomorrow.WvW)}\n\n` +
-          `Fractals:\n${formatList(tomorrow.Fractals)}`,
+          `📍 **Today:** ${psnaToday}\n` +
+          `➡️ **Tomorrow:** ${psnaTomorrow}`,
+        inline: true
+      },
+      {
+        name: "👹 Daily Strike",
+        value:
+          `🎯 **Today:** ${strikeToday}\n` +
+          `➡️ **Tomorrow:** ${strikeTomorrow}`,
+        inline: true
+      },
+      {
+        name: "📅 Tomorrow Preview",
+        value: shortText(
+          `🌿 **PvE**\n${formatSimpleList(tomorrow.PvE)}\n\n` +
+          `⚔️ **PvP**\n${formatSimpleList(tomorrow.PvP)}\n\n` +
+          `🏰 **WvW**\n${formatSimpleList(tomorrow.WvW)}\n\n` +
+          `🌀 **Fractals**\n${formatFractals(tomorrow.Fractals)}`
+        ),
         inline: false
       }
     )
     .setFooter({
-      text: "GW2 data from official API where available. PSNA/Strike use local rotation."
+      text: "Guild Wars 2 Daily Tracker • Updates same Discord message"
     })
     .setTimestamp();
 }
@@ -180,7 +267,7 @@ async function main() {
     ]
   });
 
-  client.once("ready", async () => {
+  client.once("clientReady", async () => {
     try {
       const channel = await client.channels.fetch(CHANNEL_ID);
       const embed = await buildEmbed();
